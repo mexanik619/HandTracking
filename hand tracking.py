@@ -1,32 +1,57 @@
 import cv2
 import mediapipe as mp
-import tensorflow as tf
-from tensorflow.keras.applications.mobilenet_v2 import MobileNetV2, preprocess_input, decode_predictions
-from tensorflow.keras.preprocessing import image
 import numpy as np
+import tensorflow as tf
 import os
 
-# ---------------------- Hand Tracking ---------------------- #
-def handtrack():
+# Load your trained ASL model
+MODEL_PATH = 'asl_model.h5'  # Replace with your ASL model path
+if not os.path.exists(MODEL_PATH):
+    print(f"[ERROR] ASL model file '{MODEL_PATH}' not found.")
+    exit()
+
+model = tf.keras.models.load_model(MODEL_PATH)
+
+# Load class labels (assumes 26 letters for ASL A-Z)
+labels = list("ABCDEFGHIJKLMNOPQRSTUVWXYZ")
+
+# ---------------------- ASL Detection ---------------------- #
+def asl_detection():
     mp_hands = mp.solutions.hands
-    hands = mp_hands.Hands()
+    hands = mp_hands.Hands(static_image_mode=False, max_num_hands=1, min_detection_confidence=0.7)
     mp_draw = mp.solutions.drawing_utils
 
     cap = cv2.VideoCapture(0)
 
     while True:
-        success, img = cap.read()
+        success, frame = cap.read()
         if not success:
             break
 
-        img_rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
-        results = hands.process(img_rgb)
+        img_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+        result = hands.process(img_rgb)
 
-        if results.multi_hand_landmarks:
-            for hand_landmarks in results.multi_hand_landmarks:
-                mp_draw.draw_landmarks(img, hand_landmarks, mp_hands.HAND_CONNECTIONS)
+        if result.multi_hand_landmarks:
+            for hand_landmarks in result.multi_hand_landmarks:
+                mp_draw.draw_landmarks(frame, hand_landmarks, mp_hands.HAND_CONNECTIONS)
 
-        cv2.imshow("Hand Tracking", img)
+                # Extract landmarks as a flat array
+                landmarks = []
+                for lm in hand_landmarks.landmark:
+                    landmarks.extend([lm.x, lm.y, lm.z])
+
+                # Convert to numpy and predict
+                input_data = np.array(landmarks).reshape(1, -1)
+                prediction = model.predict(input_data)[0]
+                class_id = np.argmax(prediction)
+                confidence = prediction[class_id]
+
+                # Display the predicted ASL letter
+                label = f"{labels[class_id]} ({confidence*100:.1f}%)"
+                cv2.putText(frame, label, (10, 50), cv2.FONT_HERSHEY_SIMPLEX,
+                            1.2, (0, 255, 0), 3)
+
+        cv2.imshow("ASL Detection", frame)
 
         if cv2.waitKey(1) & 0xFF == ord('q'):
             break
@@ -34,40 +59,7 @@ def handtrack():
     cap.release()
     cv2.destroyAllWindows()
 
-
-# ---------------------- Image Recognition ---------------------- #
-def imgrecognition():
-    model = MobileNetV2(weights='imagenet')
-
-    img_path = 'myimage.png'  # Replace with your image filename
-    if not os.path.exists(img_path):
-        print(f"[ERROR] Image file '{img_path}' not found.")
-        return
-
-    img = image.load_img(img_path, target_size=(224, 224))
-    img_array = image.img_to_array(img)
-    img_array = np.expand_dims(img_array, axis=0)
-    img_array = preprocess_input(img_array)
-
-    predictions = model.predict(img_array)
-    decoded = decode_predictions(predictions, top=3)[0]
-
-    print("Top Predictions:")
-    for i, (imagenetID, label, prob) in enumerate(decoded):
-        print(f"{i+1}. {label}: {prob*100:.2f}%")
-
-
 # ---------------------- Main ---------------------- #
 if __name__ == "__main__":
-    print("Choose a mode:")
-    print("1 - Hand Tracking (Webcam)")
-    print("2 - Image Recognition (Static Image)")
-
-    choice = input("Enter 1 or 2: ").strip()
-
-    if choice == '1':
-        handtrack()
-    elif choice == '2':
-        imgrecognition()
-    else:
-        print("Invalid input. Please enter 1 or 2.")
+    print("Starting ASL Gesture Detection...")
+    asl_detection()
